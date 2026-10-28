@@ -38,5 +38,6 @@ class Settings:
 
     face_luma: float = 0.0
     face_found: bool = False
+    ms: float = 0.0
     status: str = "starting"
     running: bool = True

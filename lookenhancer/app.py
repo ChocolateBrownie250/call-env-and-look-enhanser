@@ -16,7 +16,8 @@ try:
 except Exception:
     pyvirtualcam = None
 
-PREVIEW_W = 480
+PREVIEW_W = 320
+cv2.setNumThreads(min(4, os.cpu_count() or 2))
 
 
 class CameraWorker(threading.Thread):
@@ -30,6 +31,8 @@ class CameraWorker(threading.Thread):
         w, h = RESOLUTIONS[res]
         api = cv2.CAP_DSHOW if os.name == "nt" else cv2.CAP_ANY
         cap = cv2.VideoCapture(self.camera, api)
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
         cap.set(cv2.CAP_PROP_FPS, self.s.fps)
@@ -56,6 +59,8 @@ class CameraWorker(threading.Thread):
         cap = cam = None
         cur = None
         w = h = 0
+        n = 0
+        ms = 0.0
         while s.running:
             key = (s.resolution, s.fps)
             if key != cur:
@@ -71,13 +76,17 @@ class CameraWorker(threading.Thread):
                 continue
             if frame.shape[1] != w or frame.shape[0] != h:
                 frame = cv2.resize(frame, (w, h), interpolation=cv2.INTER_AREA)
+            t0 = time.perf_counter()
             out = frame if (s.compare or not s.enabled) else enh.process(frame, s)
-            s.face_luma, s.face_found = enh.luma, enh.face_found
+            ms += 0.1 * ((time.perf_counter() - t0) * 1000 - ms)
+            s.face_luma, s.face_found, s.ms = enh.luma, enh.face_found, ms
+            n += 1
             if s.softbox_on and s.softbox_auto:
                 lvl = s.softbox_level + (s.softbox_target - enh.luma) * 0.03
                 s.softbox_level = min(1.0, max(0.05, lvl))
-            pv = cv2.resize(out, (PREVIEW_W, int(PREVIEW_W * h / w)), interpolation=cv2.INTER_AREA)
-            self.preview = cv2.cvtColor(pv, cv2.COLOR_BGR2RGB)
+            if n % 3 == 0:
+                pv = cv2.resize(out, (PREVIEW_W, int(PREVIEW_W * h / w)), interpolation=cv2.INTER_AREA)
+                self.preview = cv2.cvtColor(pv, cv2.COLOR_BGR2RGB)
             if cam is not None:
                 cam.send(out)
                 cam.sleep_until_next_frame()
@@ -189,8 +198,8 @@ def run_ui(camera=0, backend=None, device=None, resolution="720p", fps=30):
             img_label.image = img
         if s.softbox_auto:
             vars_["softbox_level"].set(s.softbox_level)
-        status.configure(text=f"{s.status}\nface: {'found' if s.face_found else 'not found'}  light: {s.face_luma:.2f}")
-        root.after(80, refresh)
+        status.configure(text=f"{s.status}\nface: {'found' if s.face_found else 'not found'}  light: {s.face_luma:.2f}  {s.ms:.1f} ms/frame")
+        root.after(100, refresh)
 
     def close():
         s.running = False
