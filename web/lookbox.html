@@ -1,0 +1,387 @@
+<title>Lookbox</title>
+<style>
+/* Concept: a dark camera app where the light itself is the interface. Amber softbox accent on near-black. */
+:root{
+  --bg:#0d0e11; --surface:#16181d; --raised:#1e2128; --line:#2a2e36;
+  --text:#eceef2; --dim:#a0a7b3; --accent:#ffc46b; --on-accent:#1a1304; --danger:#ff8a80;
+  --font:"Manrope",system-ui,-apple-system,"Segoe UI",sans-serif;
+  color-scheme:dark;
+}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.4 var(--font)}
+#app{height:100%;display:flex;flex-direction:column;min-height:0}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+#stage{position:relative;flex:1 1 auto;min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden;background:#08090b;transition:padding .15s}
+#cv{max-width:100%;max-height:100%;display:none;border-radius:6px;background:#000}
+#stage.has #cv{display:block}
+#empty{max-width:30ch;text-align:center;color:var(--dim);display:flex;flex-direction:column;gap:12px;align-items:center;padding:16px}
+#empty strong{color:var(--text);font-size:18px;font-weight:700;text-wrap:balance}
+#stage.has #empty{display:none}
+.bar{position:absolute;pointer-events:none;transition:opacity .15s}
+#status{position:absolute;left:10px;top:10px;z-index:3;font-size:12px;font-variant-numeric:tabular-nums;background:rgba(13,14,17,.72);color:var(--dim);padding:4px 9px;border-radius:999px}
+#compare{position:absolute;right:10px;bottom:10px;z-index:3;min-height:44px;padding:0 16px;border-radius:999px;border:1px solid var(--line);background:rgba(13,14,17,.78);display:none;touch-action:none;user-select:none;-webkit-user-select:none}
+#stage.has #compare{display:block}
+#controlsBtn{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);z-index:4;min-height:44px;padding:0 20px;border-radius:999px;border:0;background:var(--accent);color:var(--on-accent);font-weight:700;display:none}
+body.light #controlsBtn{display:block}
+body.light #sheet{display:none}
+body.light #status,body.light #compare{display:none}
+
+#sheet{flex:0 0 auto;max-height:50%;overflow-y:auto;background:var(--surface);border-top:1px solid var(--line);padding-block:12px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:14px}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.btn{min-height:44px;padding:0 16px;border-radius:10px;border:1px solid var(--line);background:var(--raised);font-weight:600}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.btn[aria-pressed="true"]{border-color:var(--accent);color:var(--accent)}
+.btn.primary[aria-pressed="true"]{color:var(--on-accent)}
+.label{font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:var(--dim);font-weight:700}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px 24px}
+.ctl{display:flex;flex-direction:column;gap:2px;min-width:0}
+.ctl .top{display:flex;justify-content:space-between}
+.ctl output{color:var(--dim);font-variant-numeric:tabular-nums}
+input[type=range]{width:100%;min-height:36px;accent-color:var(--accent);background:transparent}
+.seg{display:flex;flex-wrap:wrap;gap:6px}
+.seg .btn{min-height:40px;padding:0 12px;font-size:13px}
+.sw{width:44px;height:44px;border-radius:50%;border:2px solid var(--line);padding:0}
+.sw[aria-pressed="true"]{border-color:var(--text)}
+input[type=color]{width:44px;height:44px;border:2px solid var(--line);border-radius:50%;padding:0;background:none}
+section{display:flex;flex-direction:column;gap:8px;min-width:0}
+#toast{position:fixed;left:50%;top:calc(env(safe-area-inset-top,0px) + 12px);transform:translateX(-50%);background:var(--text);color:var(--bg);padding:8px 14px;border-radius:999px;font-weight:600;z-index:20;max-width:90%}
+.note{color:var(--dim);font-size:12px;text-wrap:pretty}
+</style>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700&display=swap">
+
+<div id="app">
+  <div id="stage">
+    <div class="bar" id="bt"></div><div class="bar" id="bb"></div><div class="bar" id="bl"></div><div class="bar" id="br"></div>
+    <div id="status" aria-live="polite">No source</div>
+    <div id="empty">
+      <strong>Light your face, then enhance it</strong>
+      <span>Start the camera for a live preview, or take a photo. The filter and the softbox work on both.</span>
+      <button class="btn primary" id="emptyStart" type="button">Start camera</button>
+    </div>
+    <canvas id="cv" aria-label="Enhanced preview"></canvas>
+    <button id="compare" type="button">Hold: original</button>
+    <button id="controlsBtn" type="button">Controls</button>
+  </div>
+
+  <div id="sheet">
+    <div class="row">
+      <button class="btn primary" id="camBtn" type="button">Start camera</button>
+      <label class="btn" for="fileCam" style="display:inline-flex;align-items:center">Take photo</label>
+      <label class="btn" for="filePick" style="display:inline-flex;align-items:center">Choose photo</label>
+      <button class="btn" id="saveBtn" type="button" disabled>Save</button>
+      <input id="fileCam" type="file" accept="image/*" capture="user" hidden>
+      <input id="filePick" type="file" accept="image/*" hidden>
+    </div>
+    <div id="camNote" class="note" hidden></div>
+
+    <section>
+      <div class="label">Look</div>
+      <div class="seg" id="presets"></div>
+      <div class="grid">
+        <div class="ctl"><div class="top"><label for="smooth">Skin smoothing</label><output id="o-smooth"></output></div><input id="smooth" type="range" min="0" max="100"></div>
+        <div class="ctl"><div class="top"><label for="tone">Even skin tone</label><output id="o-tone"></output></div><input id="tone" type="range" min="0" max="100"></div>
+        <div class="ctl"><div class="top"><label for="expo">Auto exposure</label><output id="o-expo"></output></div><input id="expo" type="range" min="0" max="100"></div>
+        <div class="ctl"><div class="top"><label for="warm">Warmth</label><output id="o-warm"></output></div><input id="warm" type="range" min="-100" max="100"></div>
+      </div>
+    </section>
+
+    <section>
+      <div class="label">Resolution</div>
+      <div class="seg" id="res" role="group" aria-label="Resolution"></div>
+      <div class="note">Lower resolution uses less battery and GPU.</div>
+    </section>
+
+    <section>
+      <div class="label">Softbox</div>
+      <div class="row">
+        <button class="btn" id="softOn" type="button" aria-pressed="true">Light on</button>
+        <button class="btn" id="softAuto" type="button" aria-pressed="true">Auto level</button>
+        <button class="btn" id="lightMode" type="button">Light mode</button>
+      </div>
+      <div class="grid">
+        <div class="ctl"><div class="top"><label for="level">Level</label><output id="o-level"></output></div><input id="level" type="range" min="0" max="100"></div>
+        <div class="ctl"><div class="top"><label for="width">Bar width</label><output id="o-width"></output></div><input id="width" type="range" min="2" max="30"></div>
+      </div>
+      <div class="row" id="edges" role="group" aria-label="Bars"></div>
+      <div class="row" id="colors" role="group" aria-label="Light colour"></div>
+      <div class="note">Auto level adds light until your face reaches mid brightness, and only works with the live camera. Light mode fills the screen edges so the display lights you.</div>
+    </section>
+  </div>
+  <div id="toast" hidden role="status"></div>
+</div>
+
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const RES = { '1080p': 1920, '720p': 1280, '540p': 960, '480p': 854, '360p': 640 };
+  const PRESETS = {
+    Natural: { smooth: .25, tone: .15, expo: .5, warm: 0 },
+    Studio: { smooth: .45, tone: .30, expo: .6, warm: .1 },
+    Glam: { smooth: .75, tone: .50, expo: .7, warm: .2 }
+  };
+  const COLORS = [['Warm white', [255, 244, 229]], ['Cool white', [235, 244, 255]], ['Rose', [255, 190, 210]], ['Amber', [255, 190, 90]], ['Mint', [190, 255, 225]]];
+  const S = { smooth: .45, tone: .30, expo: .6, warm: .1, res: '720p', softOn: true, softAuto: true, level: .6, width: .07,
+    edges: { t: true, l: true, r: true, b: false }, color: [255, 244, 229], compare: false, src: null, gain: 1, luma: .5, light: false };
+  try { const saved = JSON.parse(localStorage.getItem('lookbox') || 'null'); if (saved) Object.assign(S, saved, { src: null, light: false, compare: false }); } catch (e) {}
+  const persist = () => { try { const { src, light, compare, luma, gain, ...rest } = S; localStorage.setItem('lookbox', JSON.stringify(rest)); } catch (e) {} };
+
+  /* ---------- WebGL ---------- */
+  const cv = $('cv');
+  const gl = cv.getContext('webgl', { preserveDrawingBuffer: true, antialias: false, alpha: false });
+  const VS = 'attribute vec2 p;varying vec2 uv;uniform float fx;void main(){uv=vec2(mix(p.x*.5+.5,.5-p.x*.5,fx),p.y*.5+.5);gl_Position=vec4(p,0.,1.);}';
+  const FS = `precision mediump float;varying vec2 uv;uniform sampler2D tex;uniform vec2 px;uniform float sm,tn,gm,wm,cmp;
+float lum(vec3 c){return dot(c,vec3(.299,.587,.114));}
+float skin(vec3 c){float cb=-.1687*c.r-.3313*c.g+.5*c.b+.5;float cr=.5*c.r-.4187*c.g-.0813*c.b+.5;
+return smoothstep(.49,.53,cr)*(1.-smoothstep(.66,.71,cr))*smoothstep(.27,.31,cb)*(1.-smoothstep(.48,.52,cb));}
+void main(){vec3 c=texture2D(tex,uv).rgb;
+if(cmp>.5){gl_FragColor=vec4(c,1.);return;}
+float rad=1.5+5.*sm;float l0=lum(c);vec3 acc=c;float ws=1.;vec3 avg=c;
+for(int i=0;i<16;i++){float a=float(i)*2.3999632;float r=sqrt((float(i)+.5)/16.)*rad;
+vec3 s=texture2D(tex,uv+vec2(cos(a),sin(a))*r*px).rgb;float d=lum(s)-l0;float w=exp(-d*d/(.004+.012*sm));acc+=s*w;ws+=w;avg+=s;}
+vec3 sc=acc/ws;vec3 ac=avg/17.;
+float m=mix(skin(c),skin(ac),.5);
+float k=m*min(1.,sm*1.4);
+vec3 o=mix(c,sc,k);
+o+=(c-sc)*k*.3;
+vec3 even=vec3(lum(o))+(ac-vec3(lum(ac)));
+o=mix(o,even,m*tn*.7);
+o=pow(clamp(o,0.,1.),vec3(gm));
+o.r*=1.+.06*wm;o.b*=1.-.06*wm;
+gl_FragColor=vec4(clamp(o,0.,1.),1.);}`;
+  let prog, U = {}, tex;
+  function glInit() {
+    if (!gl) return false;
+    const sh = (t, s) => { const o = gl.createShader(t); gl.shaderSource(o, s); gl.compileShader(o); return o; };
+    prog = gl.createProgram();
+    gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS)); gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS));
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return false;
+    gl.useProgram(prog);
+    const b = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+    const loc = gl.getAttribLocation(prog, 'p'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+    ['fx', 'px', 'sm', 'tn', 'gm', 'wm', 'cmp', 'tex'].forEach((n) => U[n] = gl.getUniformLocation(prog, n));
+    tex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    return true;
+  }
+  const glOK = glInit();
+
+  let srcEl = null, srcW = 0, srcH = 0, mirror = false;
+  function sizeCanvas() {
+    const long = RES[S.res], sc = Math.min(1, long / Math.max(srcW, srcH));
+    const w = Math.max(2, Math.round(srcW * sc)), h = Math.max(2, Math.round(srcH * sc));
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; gl.viewport(0, 0, w, h); }
+  }
+  function draw() {
+    if (!glOK || !srcEl) return;
+    sizeCanvas();
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, srcEl);
+    gl.uniform1f(U.fx, mirror ? 1 : 0);
+    gl.uniform2f(U.px, 1 / cv.width, 1 / cv.height);
+    gl.uniform1f(U.sm, S.smooth); gl.uniform1f(U.tn, S.tone);
+    gl.uniform1f(U.gm, S.gain); gl.uniform1f(U.wm, S.warm);
+    gl.uniform1f(U.cmp, S.compare ? 1 : 0);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  }
+
+  /* ---------- light measurement (auto exposure + auto softbox) ---------- */
+  const tiny = document.createElement('canvas'); tiny.width = tiny.height = 48;
+  const tctx = tiny.getContext('2d', { willReadFrequently: true });
+  function analyse(live) {
+    try {
+      tctx.drawImage(srcEl, 0, 0, 48, 48);
+      const d = tctx.getImageData(0, 0, 48, 48).data;
+      let sl = 0, n = 0, all = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        const r = d[i] / 255, g = d[i + 1] / 255, b = d[i + 2] / 255, l = .299 * r + .587 * g + .114 * b;
+        const cb = -.1687 * r - .3313 * g + .5 * b + .5, cr = .5 * r - .4187 * g - .0813 * b + .5;
+        all += l;
+        if (cr > .52 && cr < .68 && cb > .3 && cb < .5) { sl += l; n++; }
+      }
+      const luma = n > 30 ? sl / n : all / 2304;
+      S.luma += .5 * (luma - S.luma);
+      const g = Math.pow(Math.min(1.2, Math.max(.55, Math.log(.5) / Math.log(Math.min(.95, Math.max(.05, S.luma))))), S.expo);
+      S.gain = live ? S.gain + .3 * (g - S.gain) : g;
+      if (live && S.softOn && S.softAuto) {
+        S.level = Math.min(1, Math.max(.05, S.level + (.5 - S.luma) * .25));
+        $('level').value = Math.round(S.level * 100); out('level'); paintBars();
+      }
+    } catch (e) {}
+  }
+
+  /* ---------- sources ---------- */
+  const video = document.createElement('video'); video.playsInline = true; video.muted = true;
+  let stream = null, raf = 0, last = 0, frames = 0, fpsT = performance.now(), fps = 0;
+  const stage = $('stage');
+  function setHas(on) { stage.classList.toggle('has', on); $('saveBtn').disabled = !on || !saveCap; $('camBtn').textContent = S.src === 'video' ? 'Stop camera' : 'Start camera'; }
+  function status() {
+    const t = S.src === 'video' ? `Live · ${S.res} · ${fps} fps · light ${S.luma.toFixed(2)}` : S.src === 'image' ? `Photo · ${S.res} · light ${S.luma.toFixed(2)}` : 'No source';
+    $('status').textContent = t;
+  }
+  function note(msg) { const n = $('camNote'); n.hidden = !msg; n.textContent = msg || ''; }
+
+  async function startCam() {
+    if (!glOK) { note('This browser has no WebGL, so the filter cannot run.'); return; }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { noCam(); return; }
+    try {
+      const long = RES[S.res], short = Math.round(long * 9 / 16);
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: long }, height: { ideal: short } }, audio: false });
+    } catch (e) { noCam(); return; }
+    video.srcObject = stream;
+    try { await video.play(); } catch (e) {}
+    S.src = 'video'; srcEl = video; mirror = true; note('');
+    await new Promise((r) => { if (video.videoWidth) r(); else video.onloadedmetadata = r; });
+    srcW = video.videoWidth; srcH = video.videoHeight; frames = 0;
+    setHas(true); cancelAnimationFrame(raf); raf = requestAnimationFrame(loop);
+  }
+  function noCam() {
+    note('Live camera is not available in this viewer. Use Take photo or Choose photo; the same filter applies.');
+  }
+  function stopCam() {
+    cancelAnimationFrame(raf);
+    if (stream) stream.getTracks().forEach((t) => t.stop());
+    stream = null; S.src = null; srcEl = null; setHas(false); status();
+  }
+  function loop(t) {
+    if (S.src !== 'video') return;
+    raf = requestAnimationFrame(loop);
+    if (t - last < 33) return;
+    last = t;
+    if (video.readyState < 2) return;
+    srcW = video.videoWidth; srcH = video.videoHeight;
+    draw(); frames++;
+    if (frames % 10 === 0) { analyse(true); }
+    if (t - fpsT > 1000) { fps = Math.round(frames * 1000 / (t - fpsT)); frames = 0; fpsT = t; status(); }
+  }
+  async function loadFile(file) {
+    if (!file) return;
+    if (!glOK) { note('This browser has no WebGL, so the filter cannot run.'); return; }
+    stopCam();
+    let bmp;
+    try { bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }); }
+    catch (e) {
+      bmp = await new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = URL.createObjectURL(file); }).catch(() => null);
+    }
+    if (!bmp) { note('That file could not be read as an image.'); return; }
+    S.src = 'image'; srcEl = bmp; mirror = false; srcW = bmp.width || bmp.naturalWidth; srcH = bmp.height || bmp.naturalHeight;
+    note(''); setHas(true); analyse(false); draw(); status(); layout();
+  }
+  function redraw() { if (S.src === 'image') { analyse(false); draw(); } }
+
+  /* ---------- softbox ---------- */
+  function paintBars() {
+    const lvl = S.softOn ? S.level : 0, [r, g, b] = S.color;
+    const edges = S.light ? { t: 1, l: 1, r: 1, b: 1 } : S.edges;
+    const w = Math.round(Math.max(S.light ? .3 : 0, S.width) * Math.max(stage.clientHeight, 200));
+    const bg = `rgb(${Math.round(r * lvl)},${Math.round(g * lvl)},${Math.round(b * lvl)})`;
+    const glow = `0 0 ${Math.round(w * .8)}px ${Math.round(w * .25)}px rgba(${r},${g},${b},${(lvl * .45).toFixed(2)})`;
+    const geo = { bt: ['t', 'left:0;right:0;top:0;height:' + w + 'px'], bb: ['b', 'left:0;right:0;bottom:0;height:' + w + 'px'], bl: ['l', 'top:0;bottom:0;left:0;width:' + w + 'px'], br: ['r', 'top:0;bottom:0;right:0;width:' + w + 'px'] };
+    const pad = { t: 0, l: 0, r: 0, b: 0 };
+    for (const id in geo) {
+      const [k, pos] = geo[id], el = $(id), on = lvl > .01 && edges[k];
+      el.style.cssText = pos + `;background:${bg};box-shadow:${glow};opacity:${on ? 1 : 0};z-index:2`;
+      if (on) pad[k] = w;
+    }
+    stage.style.padding = `${pad.t}px ${pad.r}px ${pad.b}px ${pad.l}px`;
+  }
+  function layout() { paintBars(); }
+  new ResizeObserver(layout).observe(stage);
+
+  /* ---------- UI ---------- */
+  const fmt = { smooth: (v) => Math.round(v * 100), tone: (v) => Math.round(v * 100), expo: (v) => Math.round(v * 100), warm: (v) => (v > 0 ? '+' : '') + Math.round(v * 100), level: (v) => Math.round(v * 100), width: (v) => Math.round(v * 100) + '%' };
+  function out(k) { $('o-' + (k === 'expo' ? 'expo' : k)).textContent = fmt[k](S[k]); }
+  const sliderKeys = { smooth: 'smooth', tone: 'tone', expo: 'expo', warm: 'warm', level: 'level', width: 'width' };
+  const outId = { smooth: 'smooth', tone: 'tone', expo: 'expo', warm: 'warm', level: 'level', width: 'width' };
+  function syncSliders() {
+    for (const k in sliderKeys) { $(k).value = Math.round(S[k] * 100); $('o-' + outId[k]).textContent = fmt[k](S[k]); }
+  }
+  for (const k in sliderKeys) {
+    $(k).addEventListener('input', (e) => {
+      S[k] = Number(e.target.value) / 100;
+      if (k === 'level') S.softAuto = false, $('softAuto').setAttribute('aria-pressed', 'false');
+      $('o-' + outId[k]).textContent = fmt[k](S[k]);
+      if (k === 'level' || k === 'width') paintBars(); else redraw();
+      persist();
+    });
+  }
+  Object.keys(PRESETS).forEach((n) => {
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'btn'; b.textContent = n;
+    b.onclick = () => { Object.assign(S, PRESETS[n]); syncSliders(); redraw(); persist(); };
+    $('presets').appendChild(b);
+  });
+  Object.keys(RES).forEach((n) => {
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'btn'; b.textContent = n; b.dataset.r = n;
+    b.setAttribute('aria-pressed', String(n === S.res));
+    b.onclick = async () => {
+      S.res = n; [...$('res').children].forEach((c) => c.setAttribute('aria-pressed', String(c.dataset.r === n)));
+      persist();
+      if (S.src === 'video') { stopCam(); await startCam(); } else redraw();
+      status();
+    };
+    $('res').appendChild(b);
+  });
+  [['t', 'Top'], ['l', 'Left'], ['r', 'Right'], ['b', 'Bottom']].forEach(([k, n]) => {
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'btn'; b.textContent = n;
+    b.setAttribute('aria-pressed', String(!!S.edges[k]));
+    b.onclick = () => { S.edges[k] = !S.edges[k]; b.setAttribute('aria-pressed', String(S.edges[k])); paintBars(); persist(); };
+    $('edges').appendChild(b);
+  });
+  COLORS.forEach(([n, c]) => {
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'sw'; b.title = n; b.setAttribute('aria-label', n + ' light');
+    b.style.background = `rgb(${c})`; b.dataset.c = c.join(',');
+    b.setAttribute('aria-pressed', String(c.join(',') === S.color.join(',')));
+    b.onclick = () => { S.color = c.slice(); [...$('colors').querySelectorAll('.sw')].forEach((x) => x.setAttribute('aria-pressed', String(x === b))); paintBars(); persist(); };
+    $('colors').appendChild(b);
+  });
+  const pick = document.createElement('input'); pick.type = 'color'; pick.id = 'customColor'; pick.setAttribute('aria-label', 'Custom light colour'); pick.value = '#fff4e5';
+  pick.oninput = () => { const v = pick.value; S.color = [1, 3, 5].map((i) => parseInt(v.slice(i, i + 2), 16)); [...$('colors').querySelectorAll('.sw')].forEach((x) => x.setAttribute('aria-pressed', 'false')); paintBars(); persist(); };
+  $('colors').appendChild(pick);
+
+  $('softOn').setAttribute('aria-pressed', String(S.softOn));
+  $('softAuto').setAttribute('aria-pressed', String(S.softAuto));
+  $('softOn').onclick = (e) => { S.softOn = !S.softOn; e.currentTarget.setAttribute('aria-pressed', String(S.softOn)); paintBars(); persist(); };
+  $('softAuto').onclick = (e) => { S.softAuto = !S.softAuto; e.currentTarget.setAttribute('aria-pressed', String(S.softAuto)); persist(); };
+  $('lightMode').onclick = () => { S.light = true; S.softOn = true; $('softOn').setAttribute('aria-pressed', 'true'); document.body.classList.add('light'); paintBars(); };
+  $('controlsBtn').onclick = () => { S.light = false; document.body.classList.remove('light'); paintBars(); };
+
+  $('camBtn').onclick = () => (S.src === 'video' ? stopCam() : startCam());
+  $('emptyStart').onclick = () => startCam();
+  $('fileCam').onchange = (e) => { loadFile(e.target.files[0]); e.target.value = ''; };
+  $('filePick').onchange = (e) => { loadFile(e.target.files[0]); e.target.value = ''; };
+
+  const cmp = $('compare');
+  const cmpOn = (v) => { S.compare = v; if (S.src === 'image') draw(); };
+  cmp.addEventListener('pointerdown', (e) => { cmp.setPointerCapture(e.pointerId); cmpOn(true); });
+  ['pointerup', 'pointercancel'].forEach((ev) => cmp.addEventListener(ev, () => cmpOn(false)));
+
+  /* ---------- save ---------- */
+  let saveCap = null, toastT = 0;
+  function toast(msg) { const t = $('toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => (t.hidden = true), 2400); }
+  $('saveBtn').onclick = () => {
+    if (!saveCap || !srcEl) return;
+    const wasCmp = S.compare; S.compare = false; draw();
+    cv.toBlob(async (blob) => {
+      S.compare = wasCmp;
+      if (!blob) { toast('Could not capture the frame'); return; }
+      const d = new Date(), p = (n) => String(n).padStart(2, '0');
+      try { await saveCap.save({ filename: `lookbox-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.jpg`, data: blob }); toast('Saved'); }
+      catch (e) { if (!e || e.code !== 'declined') toast('Save is not available here'); }
+    }, 'image/jpeg', .92);
+  };
+  (async () => {
+    try { saveCap = window.claude && (await window.claude.use('downloads')); } catch (e) { saveCap = null; }
+    $('saveBtn').hidden = !saveCap;
+    $('saveBtn').disabled = !srcEl;
+  })();
+
+  if (!glOK) note('This browser has no WebGL, so the filter cannot run.');
+  syncSliders(); paintBars(); status();
+  window.addEventListener('pagehide', stopCam);
+})();
+</script>

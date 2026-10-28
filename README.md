@@ -48,3 +48,7 @@ Without a driver the app still runs as a live preview (status line says "preview
 
 - The top light bar covers app toolbars; shrink *Bar width* or untick edges you don't need.
 - Low-power laptop: 540p/360p and 24 fps.
+
+## Phone / browser version
+
+`web/lookbox.html` is a standalone page (WebGL filter + softbox bars) published as a Claude artifact. It cannot feed Meet; it is a live beauty mirror / photo booth.
