@@ -7,6 +7,14 @@ Webcam beauty filter + on-screen softbox, exposed as a virtual camera you pick i
 - **Resolution**: 1080p / 720p / 540p / 480p / 360p, switchable live. Lower = less CPU (the frame is downscaled before processing).
 - No face found → only exposure/warmth are applied.
 
+## Model and performance
+
+Face model: MediaPipe **Face Landmarker** (478-point mesh, ~4 MB, float16). It is downloaded once to `~/.cache/lookenhancer/` on first run; older mediapipe versions use the bundled legacy mesh instead. No heavy restoration network (GFPGAN/CodeFormer) is used, since those can't hold 30 fps on a laptop CPU.
+
+Speed tricks: mesh runs on a 256 px image every 3rd frame; all skin work happens on the face crop at <=256 px with the original texture added back; exposure and warmth are one LUT pass; capture uses MJPG with a 1-frame buffer; preview updates every 3rd frame.
+
+Measured here (shared cloud CPU, enhancer only, one face): 360p 7 ms, 720p 14 ms, 1080p 28 ms per frame. The status line in the app shows live ms/frame.
+
 ## Install
 
 ```bash
@@ -15,6 +23,8 @@ python -m venv .venv
 pip install -r requirements.txt
 python -m lookenhancer            # --res 360p --fps 24 --camera 1 ...
 ```
+
+Linux headless/minimal images may need `libegl1` (`sudo apt install libegl1`) for mediapipe.
 
 Try without a camera: `python -m lookenhancer --still in.jpg out.jpg`
 

@@ -1,19 +1,69 @@
 import cv2
 import numpy as np
 
+import os
+import urllib.request
+
 try:
     import mediapipe as mp
+except Exception:  # mediapipe missing
+    mp = None
 
-    _fm = mp.solutions.face_mesh
-except Exception:  # mediapipe missing or without the legacy solutions API
-    _fm = None
+MODEL_URL = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
+MODEL_PATH = os.path.join(os.path.expanduser("~"), ".cache", "lookenhancer", "face_landmarker.task")
 
 DETECT_EVERY = 3  # run the face mesh every Nth frame, reuse masks in between
 SMALL_W = 256  # width of the working image for smoothing / masks
 
 
 def _idx(conns):
-    return sorted({i for e in conns for i in e})
+    return sorted({i for e in conns for i in ((e.start, e.end) if hasattr(e, "start") else e)})
+
+
+class FaceMesh:
+    """MediaPipe face landmarks: Tasks API (FaceLandmarker, auto-downloaded ~4 MB model) or legacy solutions."""
+
+    def __init__(self):
+        self.ts = 0
+        self.legacy = None
+        self.tasks = None
+        if mp is None:
+            raise RuntimeError("mediapipe not installed")
+        if hasattr(mp, "solutions"):
+            fm = mp.solutions.face_mesh
+            self.legacy = fm.FaceMesh(static_image_mode=False, max_num_faces=1, refine_landmarks=False,
+                                      min_detection_confidence=0.5, min_tracking_confidence=0.5)
+            names = ("FACEMESH_FACE_OVAL", "FACEMESH_LEFT_EYE", "FACEMESH_RIGHT_EYE", "FACEMESH_LIPS",
+                     "FACEMESH_LEFT_EYEBROW", "FACEMESH_RIGHT_EYEBROW")
+            src = fm
+        else:
+            from mediapipe.tasks import python as mpt
+            from mediapipe.tasks.python import vision
+
+            if not os.path.exists(MODEL_PATH):
+                os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
+                urllib.request.urlretrieve(MODEL_URL, MODEL_PATH + ".tmp")
+                os.replace(MODEL_PATH + ".tmp", MODEL_PATH)
+            opts = vision.FaceLandmarkerOptions(
+                base_options=mpt.BaseOptions(model_asset_path=MODEL_PATH),
+                running_mode=vision.RunningMode.VIDEO, num_faces=1)
+            self.tasks = vision.FaceLandmarker.create_from_options(opts)
+            names = ("FACE_LANDMARKS_FACE_OVAL", "FACE_LANDMARKS_LEFT_EYE", "FACE_LANDMARKS_RIGHT_EYE",
+                     "FACE_LANDMARKS_LIPS", "FACE_LANDMARKS_LEFT_EYEBROW", "FACE_LANDMARKS_RIGHT_EYEBROW")
+            src = vision.FaceLandmarksConnections
+        oval, le, re_, lips, lb, rb = (_idx(getattr(src, n)) for n in names)
+        self.oval, self.eyes, self.holes = oval, [le, re_], [le, re_, lips, lb, rb]
+
+    def detect(self, rgb):
+        """-> (N,2) normalized landmarks of the first face, or None."""
+        if self.legacy is not None:
+            res = self.legacy.process(rgb)
+            lm = res.multi_face_landmarks[0].landmark if res.multi_face_landmarks else None
+        else:
+            self.ts += 33
+            res = self.tasks.detect_for_video(mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb), self.ts)
+            lm = res.face_landmarks[0] if res.face_landmarks else None
+        return None if lm is None else np.array([(p.x, p.y) for p in lm], np.float32)
 
 
 class Enhancer:
@@ -25,27 +75,11 @@ class Enhancer:
     """
 
     def __init__(self):
-        self.mesh = None
-        if _fm is not None:
-            self.mesh = _fm.FaceMesh(
-                static_image_mode=False,
-                max_num_faces=1,
-                refine_landmarks=False,
-                min_detection_confidence=0.5,
-                min_tracking_confidence=0.5,
-            )
-            self._oval = _idx(_fm.FACEMESH_FACE_OVAL)
-            self._holes = [
-                _idx(c)
-                for c in (
-                    _fm.FACEMESH_LEFT_EYE,
-                    _fm.FACEMESH_RIGHT_EYE,
-                    _fm.FACEMESH_LIPS,
-                    _fm.FACEMESH_LEFT_EYEBROW,
-                    _fm.FACEMESH_RIGHT_EYEBROW,
-                )
-            ]
-            self._eye_idx = [_idx(_fm.FACEMESH_LEFT_EYE), _idx(_fm.FACEMESH_RIGHT_EYE)]
+        try:
+            self.mesh = FaceMesh()
+        except Exception as e:  # no mediapipe / model download failed: skin-colour mask only
+            print(f"face mesh unavailable ({e}); using skin-colour mask")
+            self.mesh = None
         self._n = 0
         self._shape = None
         self._roi = None
@@ -69,10 +103,9 @@ class Enhancer:
         det = cv2.resize(bgr, (dw, max(1, int(h * dw / w))), interpolation=cv2.INTER_AREA)
         pts = None
         if self.mesh is not None:
-            res = self.mesh.process(cv2.cvtColor(det, cv2.COLOR_BGR2RGB))
-            if res.multi_face_landmarks:
-                lm = res.multi_face_landmarks[0].landmark
-                pts = np.array([(p.x * w, p.y * h) for p in lm], np.float32)
+            pts = self.mesh.detect(cv2.cvtColor(det, cv2.COLOR_BGR2RGB))
+            if pts is not None:
+                pts = pts * (w, h)
 
         if pts is None:
             self._set_luma(float(cv2.cvtColor(det, cv2.COLOR_BGR2GRAY).mean()) / 255.0)
@@ -81,7 +114,7 @@ class Enhancer:
             x0, y0, x1, y1 = 0, 0, w, h  # no mesh: skin-colour mask over the whole frame
         else:
             self.face_found = True
-            ox = pts[self._oval]
+            ox = pts[self.mesh.oval]
             x0, y0 = ox.min(0)
             x1, y1 = ox.max(0)
             pad = 0.12 * max(x1 - x0, y1 - y0)
@@ -107,16 +140,16 @@ class Enhancer:
                 return cv2.convexHull(local[ix].astype(np.int32))
 
             skin = np.zeros((sh, sw), np.uint8)
-            cv2.fillConvexPoly(skin, hull(self._oval), 255)
+            cv2.fillConvexPoly(skin, hull(self.mesh.oval), 255)
             holes = np.zeros((sh, sw), np.uint8)
-            for ix in self._holes:
+            for ix in self.mesh.holes:
                 cv2.fillConvexPoly(holes, hull(ix), 255)
             skin[cv2.dilate(holes, np.ones((3, 3), np.uint8)) > 0] = 0
             skin = cv2.GaussianBlur(skin, (9, 9), 0).astype(np.float32) / 255.0
             skin_s = skin * (0.35 + 0.65 * gate)
 
             eyes = np.zeros((sh, sw), np.uint8)
-            for ix in self._eye_idx:
+            for ix in self.mesh.eyes:
                 cv2.fillConvexPoly(eyes, hull(ix), 255)
             eyes = cv2.dilate(eyes, np.ones((3, 3), np.uint8))
             eyes_s = cv2.GaussianBlur(eyes, (7, 7), 0).astype(np.float32) / 255.0
