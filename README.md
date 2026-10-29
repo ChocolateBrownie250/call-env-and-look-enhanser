@@ -52,3 +52,9 @@ Without a driver the app still runs as a live preview (status line says "preview
 ## Phone / browser version
 
 `web/lookbox.html` is a standalone page (WebGL filter + softbox bars) published as a Claude artifact. It cannot feed Meet; it is a live beauty mirror / photo booth.
+
+Run with live camera (browsers only prompt on https or localhost):
+
+```bash
+cd web && python3 -m http.server 8000   # then open http://localhost:8000/lookbox.html
+```

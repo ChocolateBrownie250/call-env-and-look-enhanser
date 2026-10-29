@@ -72,6 +72,7 @@ section{display:flex;flex-direction:column;gap:8px;min-width:0}
       <label class="btn" for="fileCam" style="display:inline-flex;align-items:center">Take photo</label>
       <label class="btn" for="filePick" style="display:inline-flex;align-items:center">Choose photo</label>
       <button class="btn" id="saveBtn" type="button" disabled>Save</button>
+      <button class="btn" id="dlBtn" type="button" hidden>Download page</button>
       <input id="fileCam" type="file" accept="image/*" capture="user" hidden>
       <input id="filePick" type="file" accept="image/*" hidden>
     </div>
@@ -115,6 +116,7 @@ section{display:flex;flex-direction:column;gap:8px;min-width:0}
 
 <script>
 (function () {
+  const PAGE = '<!doctype html>\n' + document.documentElement.outerHTML;
   const $ = (id) => document.getElementById(id);
   const RES = { '1080p': 1920, '720p': 1280, '540p': 960, '480p': 854, '360p': 640 };
   const PRESETS = {
@@ -241,7 +243,8 @@ gl_FragColor=vec4(clamp(o,0.,1.),1.);}`;
     setHas(true); cancelAnimationFrame(raf); raf = requestAnimationFrame(loop);
   }
   function noCam() {
-    note('Live camera is not available in this viewer. Use Take photo or Choose photo; the same filter applies.');
+    note('The Claude viewer blocks the camera, so no permission prompt can appear here. For the live camera: tap Download page, then in that folder run "python3 -m http.server 8000" and open http://localhost:8000/lookbox.html (Chrome or Safari will ask for camera access). Take photo and Choose photo work here.');
+    $('dlBtn').hidden = !saveCap;
   }
   function stopCam() {
     cancelAnimationFrame(raf);
@@ -374,8 +377,15 @@ gl_FragColor=vec4(clamp(o,0.,1.),1.);}`;
       catch (e) { if (!e || e.code !== 'declined') toast('Save is not available here'); }
     }, 'image/jpeg', .92);
   };
+  $('dlBtn').onclick = async () => {
+    try { await saveCap.save({ filename: 'lookbox.html', data: new Blob([PAGE], { type: 'text/html' }) }); toast('Saved'); }
+    catch (e) { if (!e || e.code !== 'declined') toast('Download is not available here'); }
+  };
   (async () => {
     try { saveCap = window.claude && (await window.claude.use('downloads')); } catch (e) { saveCap = null; }
+    if (!window.claude) {
+      saveCap = { save: async ({ filename, data }) => { const a = document.createElement('a'); a.href = URL.createObjectURL(data); a.download = filename; document.body.appendChild(a); a.click(); a.remove(); } };
+    }
     $('saveBtn').hidden = !saveCap;
     $('saveBtn').disabled = !srcEl;
   })();
